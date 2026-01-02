@@ -1,15 +1,42 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, Clock, MoreHorizontal, Trash2, Edit2, Zap, Layers, BarChart3, Calendar } from 'lucide-react';
+import { Play, Clock, MoreHorizontal, Trash2, Edit2, Zap, Layers, BarChart3, Calendar, Loader2 } from 'lucide-react';
 import { Flow } from '../types';
+import { flowService } from '../services/flowService';
+import { historyService } from '../services/historyService';
 
-interface DashboardProps {
-  flows: Flow[];
-  onDelete: (id: string) => void;
-}
-
-const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
+const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState({ focusedToday: 0, sessionsCompleted: 0, streak: 0 });
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const [flowsData, statsData] = await Promise.all([
+          flowService.getAll(),
+          historyService.getStats()
+      ]);
+      setFlows(flowsData);
+      setStats(statsData);
+    } catch (error) {
+      console.error("Failed to load dashboard data", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Delete this stack?')) {
+        await flowService.delete(id);
+        setFlows(prev => prev.filter(f => f.id !== id));
+    }
+  };
 
   const formatDuration = (seconds: number) => {
     const min = Math.floor(seconds / 60);
@@ -26,6 +53,14 @@ const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
   const getDateString = () => {
     return new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short' });
   };
+
+  if (isLoading) {
+      return (
+          <div className="flex h-screen items-center justify-center text-slate-500">
+              <Loader2 className="animate-spin mr-2" /> Loading stacks...
+          </div>
+      );
+  }
 
   return (
     <div className="p-6 pb-28 space-y-6 min-h-screen">
@@ -49,22 +84,25 @@ const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
             </button>
         </div>
 
-        {/* Stats / Overview Card (Mock Data for PRD 'Stats' requirement) */}
+        {/* Stats / Overview Card */}
         <div className="bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-3xl p-5 flex justify-between items-center shadow-xl">
             <div>
                 <div className="text-slate-400 text-xs font-medium mb-1">Focused Today</div>
-                <div className="text-2xl font-bold text-white">45<span className="text-sm font-normal text-slate-500">m</span></div>
+                <div className="text-2xl font-bold text-white">
+                    {Math.round(stats.focusedToday / 60)}
+                    <span className="text-sm font-normal text-slate-500">m</span>
+                </div>
             </div>
             <div className="h-8 w-[1px] bg-slate-800"></div>
             <div>
-                <div className="text-slate-400 text-xs font-medium mb-1">Tasks Done</div>
-                <div className="text-2xl font-bold text-white">3</div>
+                <div className="text-slate-400 text-xs font-medium mb-1">Total Sessions</div>
+                <div className="text-2xl font-bold text-white">{stats.sessionsCompleted}</div>
             </div>
             <div className="h-8 w-[1px] bg-slate-800"></div>
             <div className="flex flex-col items-center">
                  <div className="text-slate-400 text-xs font-medium mb-1">Streak</div>
-                 <div className="flex items-center gap-1 text-orange-400 font-bold">
-                    <Zap size={14} fill="currentColor" /> 2
+                 <div className={`flex items-center gap-1 font-bold ${stats.streak > 0 ? 'text-orange-400' : 'text-slate-500'}`}>
+                    <Zap size={14} fill={stats.streak > 0 ? "currentColor" : "none"} /> {stats.streak}
                  </div>
             </div>
         </div>
@@ -78,7 +116,7 @@ const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
         </div>
 
         {flows.length === 0 ? (
-          <div className="text-center py-16 px-6 rounded-3xl border border-slate-800/50 bg-slate-900/20 border-dashed">
+          <div className="text-center py-16 px-6 rounded-3xl border border-slate-800/50 bg-slate-900/20 border-dashed animate-fade-in">
             <Layers size={48} className="mx-auto mb-4 text-slate-700" />
             <h3 className="text-lg font-medium text-white mb-2">Build your first stack</h3>
             <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">Create a routine or use AI to generate a scientifically backed flow.</p>
@@ -95,7 +133,7 @@ const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
                 <div 
                 key={flow.id} 
                 onClick={() => navigate(`/play/${flow.id}`)}
-                className="group relative bg-slate-900 border border-slate-800 rounded-3xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer shadow-lg overflow-hidden"
+                className="group relative bg-slate-900 border border-slate-800 rounded-3xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer shadow-lg overflow-hidden animate-fade-in"
                 >
                 <div className={`absolute inset-0 bg-gradient-to-br ${flow.color} opacity-0 group-hover:opacity-5 transition-opacity duration-500`}></div>
                 
@@ -115,7 +153,7 @@ const Dashboard: React.FC<DashboardProps> = ({ flows, onDelete }) => {
                                     <Edit2 size={14} />
                                 </button>
                                 <button 
-                                    onClick={(e) => { e.stopPropagation(); if(window.confirm('Delete?')) onDelete(flow.id); }}
+                                    onClick={(e) => { e.stopPropagation(); handleDelete(flow.id); }}
                                     className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-red-400"
                                 >
                                     <Trash2 size={14} />

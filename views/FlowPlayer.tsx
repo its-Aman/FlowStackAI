@@ -1,35 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Play, Pause, SkipForward, Check, X, RotateCcw, Volume2, VolumeX, Plus, ArrowRight, Clock } from 'lucide-react';
+import { Play, Pause, SkipForward, Check, X, RotateCcw, Volume2, VolumeX, Plus, ArrowRight, Clock, Loader2 } from 'lucide-react';
 import { Flow } from '../types';
+import { flowService } from '../services/flowService';
+import { historyService } from '../services/historyService';
 
-interface FlowPlayerProps {
-  flows: Flow[];
-}
-
-const FlowPlayer: React.FC<FlowPlayerProps> = ({ flows }) => {
-  const { id } = useParams();
+const FlowPlayer: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const flow = flows.find(f => f.id === id);
+  const [flow, setFlow] = useState<Flow | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isActive, setIsActive] = useState(false);
-  const [isTransitioning, setIsTransitioning] = useState(false); // New state for "Up Next" transition
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const hasSavedHistory = useRef(false);
 
-  // Initialize
+  // Fetch Flow Data
   useEffect(() => {
-    if (flow && flow.steps && flow.steps.length > 0) {
-      const step = flow.steps[currentStepIndex] || flow.steps[0];
-      if (step) {
-          setTimeLeft(step.duration);
-      }
-    }
-  }, [flow]);
+    const loadFlow = async () => {
+        if (!id) return;
+        setIsLoading(true);
+        try {
+            const data = await flowService.getById(id);
+            if (data) {
+                setFlow(data);
+                if (data.steps.length > 0) {
+                    setTimeLeft(data.steps[0].duration);
+                }
+            } else {
+                // Not found
+                navigate('/');
+            }
+        } catch (e) {
+            console.error("Failed to load flow", e);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    loadFlow();
+  }, [id, navigate]);
 
   // Timer Loop
   useEffect(() => {
@@ -45,6 +60,20 @@ const FlowPlayer: React.FC<FlowPlayerProps> = ({ flows }) => {
 
     return () => clearInterval(interval);
   }, [isActive, timeLeft, isTransitioning]);
+
+  // Save History on Complete
+  useEffect(() => {
+    if (isCompleted && flow && !hasSavedHistory.current) {
+        hasSavedHistory.current = true;
+        historyService.addEntry({
+            flowId: flow.id,
+            flowTitle: flow.title,
+            completedAt: new Date().toISOString(),
+            durationSpent: flow.totalDuration, // Assuming full duration for now
+            totalSteps: flow.steps.length
+        }).catch(err => console.error("Failed to save history", err));
+    }
+  }, [isCompleted, flow]);
 
   const playBeep = () => {
     if (!soundEnabled) return;
@@ -91,7 +120,7 @@ const FlowPlayer: React.FC<FlowPlayerProps> = ({ flows }) => {
         setCurrentStepIndex(nextIndex);
         if (flow.steps[nextIndex]) {
             setTimeLeft(flow.steps[nextIndex].duration);
-            setIsActive(true); // Auto start next? PRD says "Auto start after N seconds" but manual for MVP is safer
+            setIsActive(true);
         }
       }
   };
@@ -115,6 +144,14 @@ const FlowPlayer: React.FC<FlowPlayerProps> = ({ flows }) => {
     if (currentDuration === 0) return 0;
     return Math.max(0, ((currentDuration - timeLeft) / currentDuration) * 100);
   };
+
+  if (isLoading) {
+      return (
+          <div className="h-screen w-full bg-slate-950 flex items-center justify-center text-slate-500">
+              <Loader2 className="animate-spin" />
+          </div>
+      );
+  }
 
   // Guard Clauses
   if (!flow) return <div className="p-10 text-center text-slate-500">Flow not found</div>;

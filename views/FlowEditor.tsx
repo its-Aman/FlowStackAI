@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, GripVertical, Trash2, Plus, Wand2, Save, X, Clock, AlignLeft, Smile } from 'lucide-react';
+import { ArrowLeft, GripVertical, Trash2, Plus, Wand2, Save, X, Clock, AlignLeft, Smile, Loader2 } from 'lucide-react';
 import { Flow, FlowStep } from '../types';
 import { generateRoutine } from '../services/geminiService';
+import { flowService } from '../services/flowService';
 
 interface FlowEditorProps {
-  flows: Flow[];
-  onSave: (flow: Flow) => void;
-  onCreate: (flow: Flow) => void;
   isAiMode?: boolean;
 }
 
@@ -19,13 +17,15 @@ const COLORS = [
   'from-slate-500 to-slate-700'
 ];
 
-const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMode = false }) => {
-  const { id } = useParams();
+const FlowEditor: React.FC<FlowEditorProps> = ({ isAiMode = false }) => {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = id === 'new' || isAiMode;
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [draggedStepIndex, setDraggedStepIndex] = useState<number | null>(null);
   
   const [flow, setFlow] = useState<Flow>({
     id: Math.random().toString(36).substr(2, 9),
@@ -39,11 +39,22 @@ const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMo
   });
 
   useEffect(() => {
-    if (id && id !== 'new') {
-      const existing = flows.find(f => f.id === id);
-      if (existing) setFlow(existing);
-    }
-  }, [id, flows]);
+    const fetchFlow = async () => {
+        if (id && id !== 'new') {
+            setIsLoading(true);
+            try {
+                const data = await flowService.getById(id);
+                if (data) setFlow(data);
+                else navigate('/'); // Handle not found
+            } catch (e) {
+                console.error("Error fetching flow", e);
+            } finally {
+                setIsLoading(false);
+            }
+        }
+    };
+    fetchFlow();
+  }, [id, navigate]);
 
   useEffect(() => {
     const total = flow.steps.reduce((acc, step) => acc + step.duration, 0);
@@ -93,24 +104,65 @@ const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMo
     }));
   };
 
-  const handleSave = () => {
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
+      // Prevent drag if interacting with inputs
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+          e.preventDefault();
+          return;
+      }
+      setDraggedStepIndex(index);
+      e.dataTransfer.effectAllowed = "move";
+      // Optional: Remove ghost image opacity or set custom image
+      // e.dataTransfer.setDragImage(e.currentTarget, 0, 0);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, index: number) => {
+      e.preventDefault();
+      if (draggedStepIndex === null) return;
+      if (draggedStepIndex === index) return;
+
+      const newSteps = [...flow.steps];
+      const draggedItem = newSteps[draggedStepIndex];
+      newSteps.splice(draggedStepIndex, 1);
+      newSteps.splice(index, 0, draggedItem);
+
+      setFlow(prev => ({ ...prev, steps: newSteps }));
+      setDraggedStepIndex(index);
+  };
+
+  const handleDragEnd = () => {
+      setDraggedStepIndex(null);
+  };
+
+  const handleSave = async () => {
     if (!flow.title) {
       alert("Please enter a title");
       return;
     }
+    
+    setIsSaving(true);
+    
     const finalFlow = {
         ...flow,
         description: flow.description || "No description"
     };
 
-    if (isNew && id !== 'new' && !flows.find(f => f.id === flow.id)) {
-      onCreate(finalFlow);
-    } else if (isNew && id === 'new') {
-      onCreate(finalFlow);
-    } else {
-      onSave(finalFlow);
+    try {
+        if (isNew && id !== 'new') {
+            // New flow created via AI route or standard new
+            await flowService.create(finalFlow);
+        } else if (isNew && id === 'new') {
+            await flowService.create(finalFlow);
+        } else {
+            // Update existing
+            await flowService.update(finalFlow);
+        }
+        navigate('/');
+    } catch (e) {
+        alert('Failed to save flow');
+    } finally {
+        setIsSaving(false);
     }
-    navigate('/');
   };
 
   const formatDuration = (seconds: number) => {
@@ -119,6 +171,14 @@ const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMo
       if (sec === 0) return `${min}m`;
       return `${min}m ${sec}s`;
   };
+
+  if (isLoading && !isNew) {
+      return (
+        <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-slate-500">
+            <Loader2 className="animate-spin" />
+        </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
@@ -131,9 +191,10 @@ const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMo
             <h2 className="font-semibold text-white">{isNew ? 'Create Flow' : 'Edit Flow'}</h2>
             <button 
             onClick={handleSave}
-            className="text-indigo-400 font-semibold text-sm px-3 py-1.5 hover:bg-indigo-900/20 rounded-lg transition-colors"
+            disabled={isSaving}
+            className="text-indigo-400 font-semibold text-sm px-3 py-1.5 hover:bg-indigo-900/20 rounded-lg transition-colors disabled:opacity-50"
             >
-            Save
+            {isSaving ? 'Saving...' : 'Save'}
             </button>
         </div>
       </div>
@@ -226,8 +287,17 @@ const FlowEditor: React.FC<FlowEditorProps> = ({ flows, onSave, onCreate, isAiMo
                 <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-800 z-0"></div>
 
                 {flow.steps.map((step, index) => (
-                    <div key={step.id} className="relative z-10 flex gap-4 animate-fade-in group">
-                        <div className="mt-4 w-12 flex-shrink-0 flex flex-col items-center gap-1">
+                    <div 
+                        key={step.id} 
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragEnd={handleDragEnd}
+                        className={`relative z-10 flex gap-4 group transition-all duration-200 ${draggedStepIndex === index ? 'opacity-40 scale-[0.98]' : 'opacity-100'}`}
+                    >
+                        {/* Drag Handle & Indicator */}
+                        <div className="mt-4 w-12 flex-shrink-0 flex flex-col items-center gap-1 cursor-grab active:cursor-grabbing hover:scale-105 transition-transform">
+                             <GripVertical size={16} className="text-slate-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity" />
                              <div className="w-3 h-3 rounded-full bg-slate-700 border-2 border-slate-950 group-hover:bg-indigo-500 transition-colors"></div>
                         </div>
                         

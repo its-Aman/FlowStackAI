@@ -18,9 +18,12 @@ export interface Flow {
 }
 
 export interface FlowHistory {
+  id: string;
   flowId: string;
+  flowTitle: string;
   completedAt: string;
-  durationSpent: number;
+  durationSpent: number; // seconds
+  totalSteps: number;
 }
 
 export enum AppRoute {
